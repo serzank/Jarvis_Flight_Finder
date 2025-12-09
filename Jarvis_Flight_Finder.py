@@ -10,28 +10,34 @@ amadeus = Client(
     client_secret='uZxH10uZmCnhGUiS'
 )
 
-# Havayolu Kodları Sözlüğü (Genişletilmiş Liste)
+# Havayolu Kodları Sözlüğü (Genişletilmiş ve Güncellenmiş)
 HAVAYOLU_ISIMLERI = {
     "TK": "Turkish Airlines", 
-    "VF": "AJet", # AJet genellikle VF kodunu kullanır
+    "VF": "AJet", 
     "AJ": "AJet",
-    "PC": "Pegasus", 
+    "PC": "Pegasus Airlines", 
     "XQ": "SunExpress",
     "HV": "Transavia",
     "XC": "Corendon",
     "LH": "Lufthansa",
-    "KL": "KLM", 
+    "KL": "KLM Royal Dutch", 
     "BA": "British Airways", 
     "AF": "Air France", 
-    "LO": "LOT Polish",
+    "LO": "LOT Polish Airlines",
     "AZ": "ITA Airways", 
     "FR": "Ryanair", 
     "W6": "Wizz Air", 
     "U2": "EasyJet",
     "VY": "Vueling",
-    "LX": "Swiss Air",
-    "OS": "Austrian",
-    "JU": "Air Serbia"
+    "LX": "Swiss International",
+    "OS": "Austrian Airlines",
+    "JU": "Air Serbia",
+    "SN": "Brussels Airlines",
+    "A3": "Aegean Airlines",
+    "IB": "Iberia",
+    "TP": "TAP Air Portugal",
+    "AY": "Finnair",
+    "SK": "SAS Scandinavian"
 }
 
 # Veritabanı
@@ -62,6 +68,7 @@ def tekil_arama_yap(parametreler):
     kalkis, varis, gidis_tarihi, seyahat_suresi = parametreler
     donus_tarihi = gidis_tarihi + timedelta(days=seyahat_suresi)
     try:
+        # returnDate parametresi olduğu için API otomatik olarak Gidiş-Dönüş arar
         response = amadeus.shopping.flight_offers_search.get(
             originLocationCode=kalkis,
             destinationLocationCode=varis,
@@ -114,8 +121,8 @@ def hizli_arama_motoru(kalkis_kodu, hedef_sehirler_dict, baslangic_tarihi, arama
                     tarih_d = seg_d['departure']['at']
                     
                     h_kod = seg_g['carrierCode']
-                    # Sözlükte yoksa kodu, varsa ismi getir
-                    h_ad = HAVAYOLU_ISIMLERI.get(h_kod, f"Havayolu ({h_kod})")
+                    # SÖZLÜKTEN TAM İSMİ ÇEKME İŞLEMİ:
+                    h_ad = HAVAYOLU_ISIMLERI.get(h_kod, h_kod) # Bulamazsa kodu yazar ama genelde bulur
                     
                     toplam_seg = len(ucus['itineraries'][0]['segments']) + len(ucus['itineraries'][1]['segments'])
                     tip = "Direkt" if toplam_seg == 2 else "Aktarmalı"
@@ -150,47 +157,55 @@ def bilet_kart_ciz(bilet):
     if bilet['Kod'] == "TK":
         renk = "#d32f2f" # Kırmızı (THY)
     elif bilet['Kod'] in ["VF", "AJ", "PC"]:
-        renk = "#fbc02d" # Sarı (Pegasus/AJet) - Yazı koyu olsun diye aşağıda ayarlandı
+        renk = "#fbc02d" # Sarı (Pegasus/AJet)
         yazi_rengi = "#333"
     else:
         renk = "#1976d2" # Mavi (Diğer)
         yazi_rengi = renk
         
     html = f"""
-    <div style="background: white; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; display: flex; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; border: 1px solid #ddd;">
-        <div style="background: {renk}; width: 10px;"></div>
+    <div style="background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 20px; display: flex; overflow: hidden; font-family: 'Segoe UI', sans-serif; border: 1px solid #e0e0e0;">
+        <div style="background: {renk}; width: 12px;"></div>
         <div style="padding: 20px; flex-grow: 1;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #f0f0f0; padding-bottom: 10px;">
-                <span style="font-weight: 800; color: #222; font-size: 16px; text-transform: uppercase; letter-spacing: 1px;">
-                    <span style="color: {yazi_rengi}; margin-right:5px;">✈</span> {bilet['Havayolu']}
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #f0f0f0; padding-bottom: 10px;">
+                <span style="font-weight: 800; color: #333; font-size: 18px; letter-spacing: 0.5px;">
+                    <span style="color: {yazi_rengi}; margin-right:8px;">✈</span> {bilet['Havayolu']}
                 </span>
-                <span style="background: #f1f8e9; color: #33691e; padding: 4px 10px; border-radius: 15px; font-size: 12px; font-weight: bold; border: 1px solid #c5e1a5;">{bilet['Tip']}</span>
+                <div style="text-align: right;">
+                    <span style="background: #e3f2fd; color: #1565c0; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-right: 5px;">GİDİŞ - DÖNÜŞ</span>
+                    <span style="background: #f1f8e9; color: #33691e; padding: 4px 10px; border-radius: 15px; font-size: 12px; font-weight: bold; border: 1px solid #c5e1a5;">{bilet['Tip']}</span>
+                </div>
             </div>
             <div style="display: flex; align-items: center; justify-content: space-between;">
-                <div style="text-align: left;">
-                    <div style="font-size: 24px; font-weight: 900; color: #212121;">{bilet['G_Saat']}</div>
-                    <div style="font-size: 13px; color: #757575;">{bilet['Kalkış']} <br> {bilet['G_Tarih']}</div>
+                <div style="text-align: left; width: 30%;">
+                    <div style="font-size: 26px; font-weight: 900; color: #212121;">{bilet['G_Saat']}</div>
+                    <div style="font-size: 13px; color: #666; font-weight: 500;">{bilet['Kalkış']} <br> {bilet['G_Tarih']}</div>
                 </div>
-                <div style="color: #bdbdbd; font-size: 24px;">⟶</div>
-                <div style="text-align: right;">
-                    <div style="font-size: 24px; font-weight: 900; color: #212121;">{bilet['D_Saat']}</div>
-                    <div style="font-size: 13px; color: #757575;">{bilet['Varış']} <br> {bilet['D_Tarih']}</div>
+                
+                <div style="color: #bdbdbd; font-size: 28px; text-align: center; width: 20%;">
+                    ⟷
+                </div>
+                
+                <div style="text-align: right; width: 30%;">
+                    <div style="font-size: 26px; font-weight: 900; color: #212121;">{bilet['D_Saat']}</div>
+                    <div style="font-size: 13px; color: #666; font-weight: 500;">{bilet['Varış']} <br> {bilet['D_Tarih']}</div>
                 </div>
             </div>
         </div>
-        <div style="background: #fcfcfc; width: 120px; display: flex; flex-direction: column; justify-content: center; align-items: center; border-left: 2px dashed #ccc;">
-            <div style="font-size: 22px; font-weight: bold; color: #2e7d32;">{int(bilet['Fiyat'])}</div>
-            <div style="font-size: 14px; color: #388e3c; font-weight:500;">{bilet['Para']}</div>
+        <div style="background: #fafafa; width: 140px; display: flex; flex-direction: column; justify-content: center; align-items: center; border-left: 2px dashed #d0d0d0;">
+            <div style="font-size: 12px; color: #777; margin-bottom: 5px;">Toplam Tutar</div>
+            <div style="font-size: 24px; font-weight: bold; color: #2e7d32;">{int(bilet['Fiyat'])}</div>
+            <div style="font-size: 14px; color: #388e3c; font-weight:600;">{bilet['Para']}</div>
         </div>
     </div>
     """
     st.markdown(html, unsafe_allow_html=True)
 
 # --- 3. ARAYÜZ ---
-st.set_page_config(page_title="Jarvis Air v3", layout="centered")
+st.set_page_config(page_title="Jarvis Air v4", layout="centered")
 
-st.title("🛫 Uçuş Bulucu")
-st.caption("En iyi 5 teklif listeleniyor...")
+st.title("🛫 Jarvis Uçuş Bulucu")
+st.caption("Kişisel seyahat asistanınız, en iyi 5 gidiş-dönüş fırsatını tarıyor...")
 
 with st.sidebar:
     st.header("Seyahat Planı")
@@ -230,7 +245,7 @@ if btn_ara:
         
         if sonuclar:
             df = pd.DataFrame(sonuclar).sort_values(by="Fiyat")
-            st.success(f"Toplam {len(df)} uçuş bulundu. En ucuz 5 seçenek listeleniyor:")
+            st.success(f"Toplam {len(df)} adet Gidiş-Dönüş uçuşu bulundu. En ucuz 5 seçenek listeleniyor:")
             
             # --- FİNAL DOKUNUŞ: Sadece ilk 5 bileti göster ---
             for i, row in df.head(5).iterrows():
