@@ -83,7 +83,7 @@ def tekil_arama_yap(parametreler):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def hizli_arama_motoru(kalkis_kodu, hedef_sehirler_dict, baslangic_tarihi, arama_araligi, seyahat_suresi):
-    """Paralel İşlem Motoru"""
+    """Paralel İşlem Motoru - Revize Edilmiş (IST/SAW Filtreli)"""
     tum_gorevler = []
     
     for sehir_adi, iata_kodu in hedef_sehirler_dict.items():
@@ -107,13 +107,26 @@ def hizli_arama_motoru(kalkis_kodu, hedef_sehirler_dict, baslangic_tarihi, arama
             sehir_ismi = [k for k, v in hedef_sehirler_dict.items() if v == ilgili_iata][0]
             
             if ham_veri:
-                ucus = ham_veri[0]
+                # Genelde en ucuz uçuş ilk sıradadır ama biz yine de listeyi dönelim
+                # veya sadece ilkini alıp kontrol edelim. Sizin kodunuz ilkini alıyordu (ham_veri[0])
+                ucus = ham_veri[0] 
+                
                 try:
+                    # --- 1. VERİLERİ ÇEK ---
+                    seg_g = ucus['itineraries'][0]['segments'][0]
+                    g_kod = seg_g['departure']['iataCode'] # API'den gelen gerçek kalkış kodu
+                    
+                    # --- 2. FİLTRELEME (YENİ EKLENEN KISIM) ---
+                    # Eğer kullanıcı IST seçtiyse ama API SAW gönderdiyse (veya tam tersi), bu sonucu atla.
+                    if g_kod != kalkis_kodu:
+                        tamamlanan += 1
+                        bar.progress(tamamlanan / toplam_gorev)
+                        continue
+
+                    # --- 3. DİĞER VERİLERİ İŞLE ---
                     fiyat = float(ucus['price']['total'])
                     para = ucus['price']['currency']
                     
-                    seg_g = ucus['itineraries'][0]['segments'][0]
-                    g_kod = seg_g['departure']['iataCode']
                     v_kod = seg_g['arrival']['iataCode']
                     tarih_g = seg_g['departure']['at']
                     
@@ -140,7 +153,8 @@ def hizli_arama_motoru(kalkis_kodu, hedef_sehirler_dict, baslangic_tarihi, arama
                         "D_Tarih": tarih_d.split('T')[0],
                         "D_Saat": tarih_d.split('T')[1][:5]
                     })
-                except:
+                except Exception as e:
+                    # Hata ayıklama için (gerekirse print(e) açılabilir)
                     pass
             
             tamamlanan += 1
@@ -251,3 +265,4 @@ if btn_ara:
                 bilet_kart_ciz(row)
         else:
             st.error("Uçuş bulunamadı.")
+
