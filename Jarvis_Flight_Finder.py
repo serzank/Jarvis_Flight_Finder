@@ -10,13 +10,13 @@ amadeus = Client(
     client_secret='uZxH10uZmCnhGUiS'
 )
 
-# Havayolu Kodları
+# Havayolu İsim Sözlüğü
 HAVAYOLU_ISIMLERI = {
-    "TK": "Turkish Airlines", "VF": "AJet", "AJ": "AJet", "PC": "Pegasus",
-    "XQ": "SunExpress", "LH": "Lufthansa", "KL": "KLM", "BA": "British Airways",
-    "AF": "Air France", "LO": "LOT", "AZ": "ITA Airways", "FR": "Ryanair",
-    "W6": "Wizz Air", "U2": "EasyJet", "VY": "Vueling", "LX": "Swiss",
-    "OS": "Austrian", "JU": "Air Serbia", "SN": "Brussels", "A3": "Aegean",
+    "TK": "Turkish Airlines", "VF": "AJet", "AJ": "AJet", "PC": "Pegasus Airlines",
+    "XQ": "SunExpress", "LH": "Lufthansa", "KL": "KLM Royal Dutch", "BA": "British Airways",
+    "AF": "Air France", "LO": "LOT Polish", "AZ": "ITA Airways", "FR": "Ryanair",
+    "W6": "Wizz Air", "U2": "EasyJet", "VY": "Vueling", "LX": "Swiss Int.",
+    "OS": "Austrian Airlines", "JU": "Air Serbia", "SN": "Brussels Airlines", "A3": "Aegean",
     "IB": "Iberia", "TP": "TAP Portugal", "AY": "Finnair", "SK": "SAS",
     "BT": "Air Baltic", "OU": "Croatia Airlines", "KM": "Air Malta"
 }
@@ -45,20 +45,21 @@ def tekil_arama_yap(parametreler):
     kalkis, varis, gidis_tarihi, seyahat_suresi = parametreler
     donus_tarihi = gidis_tarihi + timedelta(days=seyahat_suresi)
     try:
+        # API her zaman karışık getirsin, biz Python tarafında filtreleyeceğiz
         response = amadeus.shopping.flight_offers_search.get(
             originLocationCode=kalkis,
             destinationLocationCode=varis,
             departureDate=gidis_tarihi.strftime("%Y-%m-%d"),
             returnDate=donus_tarihi.strftime("%Y-%m-%d"),
             adults=1,
-            max=10 
+            max=10
         )
         return response.data, varis
     except ResponseError:
         return [], varis
 
 @st.cache_data(ttl=300, show_spinner=False)
-def hizli_arama_motoru(kalkis_kodu, hedef_sehirler_dict, baslangic_tarihi, arama_araligi, seyahat_suresi):
+def hizli_arama_motoru(kalkis_kodu, hedef_sehirler_dict, baslangic_tarihi, arama_araligi, seyahat_suresi, sadece_direkt):
     tum_gorevler = []
     
     for sehir_adi, iata_kodu in hedef_sehirler_dict.items():
@@ -83,27 +84,41 @@ def hizli_arama_motoru(kalkis_kodu, hedef_sehirler_dict, baslangic_tarihi, arama
             if ham_veriler:
                 for ucus in ham_veriler:
                     try:
+                        # --- Gidiş Analizi ---
                         itinerary_gidis = ucus['itineraries'][0]
                         segmentler_gidis = itinerary_gidis['segments']
                         ilk_nokta = segmentler_gidis[0]['departure']['iataCode']
                         son_nokta = segmentler_gidis[-1]['arrival']['iataCode']
                         
+                        # Filtre: Yanlış havalimanı kontrolü
                         if ilk_nokta != kalkis_kodu: continue
 
+                        # --- Dönüş Analizi ---
                         itinerary_donus = ucus['itineraries'][1]
                         segmentler_donus = itinerary_donus['segments']
                         
-                        tarih_g_full = segmentler_gidis[0]['departure']['at']
-                        tarih_d_full = segmentler_donus[0]['departure']['at']
+                        # --- Direkt Uçuş Kontrolü ---
+                        toplam_bacak = len(segmentler_gidis) + len(segmentler_donus)
+                        is_direct = (toplam_bacak == 2)
                         
+                        # EĞER kullanıcı "Sadece Direkt" seçtiyse ve uçuş direkt değilse -> ATLA
+                        if sadece_direkt and not is_direct:
+                            continue
+                        
+                        tip = "Direkt Uçuş" if is_direct else f"{toplam_bacak-2} Aktarma"
+
+                        # Tarihler
+                        tarih_g_kalkis = segmentler_gidis[0]['departure']['at']
+                        tarih_g_varis = segmentler_gidis[-1]['arrival']['at']
+                        
+                        tarih_d_kalkis = segmentler_donus[0]['departure']['at']
+                        tarih_d_varis = segmentler_donus[-1]['arrival']['at']
+                        
+                        # Fiyat ve İsim
                         fiyat = float(ucus['price']['total'])
                         para = ucus['price']['currency']
-                        
                         h_kod = segmentler_gidis[0]['carrierCode']
-                        h_ad = HAVAYOLU_ISIMLERI.get(h_kod, h_kod)
-                        
-                        toplam_bacak = len(segmentler_gidis) + len(segmentler_donus)
-                        tip = "Direkt" if toplam_bacak == 2 else f"{toplam_bacak-2} Aktarma"
+                        h_ad = HAVAYOLU_ISIMLERI.get(h_kod, h_kod) # İsim yoksa kodu kullan ama genelde isim gelir
 
                         islenmis_sonuclar.append({
                             "Şehir": sehir_ismi,
@@ -114,10 +129,14 @@ def hizli_arama_motoru(kalkis_kodu, hedef_sehirler_dict, baslangic_tarihi, arama
                             "Havayolu": h_ad,
                             "Kod": h_kod,
                             "Tip": tip,
-                            "G_Tarih": tarih_g_full.split('T')[0],
-                            "G_Saat": tarih_g_full.split('T')[1][:5],
-                            "D_Tarih": tarih_d_full.split('T')[0],
-                            "D_Saat": tarih_d_full.split('T')[1][:5]
+                            # Gidiş Bilgileri
+                            "G_Tarih": tarih_g_kalkis.split('T')[0],
+                            "G_Saat_Kalkis": tarih_g_kalkis.split('T')[1][:5],
+                            "G_Saat_Varis": tarih_g_varis.split('T')[1][:5],
+                            # Dönüş Bilgileri
+                            "D_Tarih": tarih_d_kalkis.split('T')[0],
+                            "D_Saat_Kalkis": tarih_d_kalkis.split('T')[1][:5],
+                            "D_Saat_Varis": tarih_d_varis.split('T')[1][:5]
                         })
                         break 
                     except: continue
@@ -136,45 +155,64 @@ def bilet_kart_ciz(bilet):
         "TK": "#C8102E", "VF": "#005EB8", "AJ": "#005EB8", "PC": "#F4B323",
         "LH": "#FAB415", "BA": "#01295F", "KL": "#00A1DE", "AF": "#002157"
     }
-    renk = renk_map.get(bilet['Kod'], "#546E7A")
-    yazi_rengi = "#333" if bilet['Kod'] in ["PC", "LH"] else "#fff"
-    
+    renk = renk_map.get(bilet['Kod'], "#607d8b")
     fiyat_str = f"{int(bilet['Fiyat']):,}".replace(",", ".")
 
-    # HTML KODU (BOŞLUKSUZ VE TEMİZ)
+    # HTML Tasarım - İKİ AYRI SÜTUN (Split View)
     html_code = f"""
-<div style="font-family: 'Arial', sans-serif; background: #fff; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 20px; border: 1px solid #eee; overflow: hidden; display: flex;">
-    <div style="background: {renk}; width: 50px; display: flex; align-items: center; justify-content: center;">
-        <div style="color: {yazi_rengi}; font-weight: 900; font-size: 16px; transform: rotate(-90deg); white-space: nowrap;">{bilet['Kod']}</div>
-    </div>
-    <div style="flex: 1; padding: 15px 20px;">
-        <div style="display: flex; justify-content: space-between; margin-bottom: 15px; border-bottom: 1px solid #f0f0f0; padding-bottom: 10px;">
-            <span style="font-weight: 700; color: #333; font-size: 16px;">{bilet['Havayolu']}</span>
-            <span style="background: #e3f2fd; color: #1565c0; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 700;">{bilet['Tip']}</span>
+    <div style="font-family: 'Segoe UI', sans-serif; background: white; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); margin-bottom: 25px; border: 1px solid #e0e0e0; overflow: hidden;">
+        
+        <div style="background: {renk}; padding: 10px 20px; color: white; display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-weight: 700; font-size: 16px; letter-spacing: 0.5px;">{bilet['Havayolu']}</span>
+            <span style="background: rgba(255,255,255,0.2); padding: 2px 10px; border-radius: 12px; font-size: 11px;">{bilet['Tip']}</span>
         </div>
-        <div style="display: flex; align-items: center; justify-content: space-between;">
-            <div style="text-align: left;">
-                <div style="font-size: 24px; font-weight: 800; color: #222;">{bilet['G_Saat']}</div>
-                <div style="font-size: 12px; color: #777;">{bilet['Kalkış']} • {bilet['G_Tarih']}</div>
+
+        <div style="display: flex; flex-direction: row; padding: 20px;">
+            
+            <div style="flex: 1; padding-right: 15px; border-right: 1px dashed #ccc;">
+                <div style="font-size: 11px; color: #999; font-weight: 700; margin-bottom: 5px;">GİDİŞ ✈</div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="text-align: left;">
+                        <div style="font-size: 20px; font-weight: 800; color: #333;">{bilet['G_Saat_Kalkis']}</div>
+                        <div style="font-size: 12px; color: #666;">{bilet['Kalkış']}</div>
+                    </div>
+                    <div style="color: #ddd; font-size: 14px;">➝</div>
+                    <div style="text-align: right;">
+                        <div style="font-size: 20px; font-weight: 800; color: #333;">{bilet['G_Saat_Varis']}</div>
+                        <div style="font-size: 12px; color: #666;">{bilet['Varış']}</div>
+                    </div>
+                </div>
+                <div style="font-size: 12px; color: #888; margin-top: 5px;">{bilet['G_Tarih']}</div>
             </div>
-            <div style="color: #ddd; font-size: 20px;">✈</div>
-            <div style="text-align: right;">
-                <div style="font-size: 24px; font-weight: 800; color: #222;">{bilet['D_Saat']}</div>
-                <div style="font-size: 12px; color: #777;">{bilet['Varış']} • {bilet['D_Tarih']}</div>
+
+            <div style="flex: 1; padding-left: 15px;">
+                <div style="font-size: 11px; color: #999; font-weight: 700; margin-bottom: 5px;">DÖNÜŞ ✈</div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="text-align: left;">
+                        <div style="font-size: 20px; font-weight: 800; color: #333;">{bilet['D_Saat_Kalkis']}</div>
+                        <div style="font-size: 12px; color: #666;">{bilet['Varış']}</div>
+                    </div>
+                    <div style="color: #ddd; font-size: 14px;">➝</div>
+                    <div style="text-align: right;">
+                        <div style="font-size: 20px; font-weight: 800; color: #333;">{bilet['D_Saat_Varis']}</div>
+                        <div style="font-size: 12px; color: #666;">{bilet['Kalkış']}</div>
+                    </div>
+                </div>
+                <div style="font-size: 12px; color: #888; margin-top: 5px;">{bilet['D_Tarih']}</div>
             </div>
+
+            <div style="width: 100px; display: flex; flex-direction: column; justify-content: center; align-items: center; padding-left: 15px; border-left: 1px solid #eee;">
+                <div style="font-size: 20px; font-weight: 900; color: #2e7d32;">{fiyat_str}</div>
+                <div style="font-size: 12px; font-weight: 600; color: #2e7d32;">{bilet['Para']}</div>
+            </div>
+
         </div>
     </div>
-    <div style="width: 120px; background: #f9f9f9; display: flex; flex-direction: column; align-items: center; justify-content: center; border-left: 1px dashed #ccc;">
-        <div style="font-size: 11px; color: #888;">TOPLAM</div>
-        <div style="font-size: 22px; font-weight: 900; color: #2e7d32;">{fiyat_str}</div>
-        <div style="font-size: 13px; font-weight: 700; color: #2e7d32;">{bilet['Para']}</div>
-    </div>
-</div>
-"""
+    """
     st.markdown(html_code, unsafe_allow_html=True)
 
 # --- 3. ARAYÜZ ---
-st.set_page_config(page_title="Jarvis Air v5.1", layout="centered", page_icon="✈️")
+st.set_page_config(page_title="Jarvis Air v6.0", layout="centered", page_icon="✈️")
 
 st.markdown("<h1 style='text-align: center;'>✈ Jarvis Flight Manager</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #666;'>Tüm veritabanları taranarak en optimize rotalar oluşturuluyor.</p>", unsafe_allow_html=True)
@@ -183,6 +221,9 @@ with st.sidebar:
     st.header("Parametreler")
     kalkis_secim = st.selectbox("Kalkış", list(KALKIS_NOKTALARI.keys()))
     kalkis_code = KALKIS_NOKTALARI[kalkis_secim]
+    
+    # YENİ EKLENEN FİLTRE
+    sadece_direkt = st.checkbox("Sadece Direkt Uçuşlar", value=True)
     
     st.markdown("---")
     secilen_ulkeler = st.multiselect("Bölge", list(ULKE_SEHIR_VERITABANI.keys()), default=["İtalya"])
@@ -201,7 +242,9 @@ if btn:
     if not hedef_dict:
         st.warning("Şehir seçiniz.")
     else:
-        sonuclar = hizli_arama_motoru(kalkis_code, hedef_dict, date.today(), aralik, sure)
+        # sadece_direkt parametresi fonksiyona eklendi
+        sonuclar = hizli_arama_motoru(kalkis_code, hedef_dict, date.today(), aralik, sure, sadece_direkt)
+        
         if sonuclar:
             df = pd.DataFrame(sonuclar).sort_values(by="Fiyat")
             st.success(f"İşlem Tamamlandı: {len(df)} adet uygun rota bulundu.")
