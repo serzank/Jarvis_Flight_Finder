@@ -6,8 +6,8 @@ from datetime import date, timedelta
 # --- 1. AYARLAR VE API BAĞLANTISI ---
 # Buraya Amadeus'tan alacağınız anahtarları gireceksiniz.
 amadeus = Client(
-    client_id='SIZIN_API_KEY',
-    client_secret='SIZIN_API_SECRET'
+    client_id='eN67W0VVx8WfcYKAc4GvzJcy3bapkIUe',
+    client_secret='uZxH10uZmCnhGUiS'
 )
 
 # --- 2. FONKSİYONLAR ---
@@ -151,4 +151,5 @@ if arama_butonu:
         st.dataframe(df, use_container_width=True)
         
     else:
+
         st.warning("Kriterlere uygun uçuş bulunamadı veya API limiti aşıldı.")
