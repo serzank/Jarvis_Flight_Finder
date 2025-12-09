@@ -3,6 +3,7 @@ import pandas as pd
 from amadeus import Client, ResponseError
 from datetime import date, timedelta
 import concurrent.futures
+import textwrap # <-- Düzeltme için eklenen sihirli kütüphane
 
 # --- 1. AYARLAR VE API ---
 amadeus = Client(
@@ -10,7 +11,7 @@ amadeus = Client(
     client_secret='uZxH10uZmCnhGUiS'
 )
 
-# Havayolu Kodları Sözlüğü (Genişletilmiş ve Güncellenmiş)
+# Havayolu Kodları Sözlüğü
 HAVAYOLU_ISIMLERI = {
     "TK": "Turkish Airlines", 
     "VF": "AJet", 
@@ -68,7 +69,6 @@ def tekil_arama_yap(parametreler):
     kalkis, varis, gidis_tarihi, seyahat_suresi = parametreler
     donus_tarihi = gidis_tarihi + timedelta(days=seyahat_suresi)
     try:
-        # returnDate parametresi olduğu için API otomatik olarak Gidiş-Dönüş arar
         response = amadeus.shopping.flight_offers_search.get(
             originLocationCode=kalkis,
             destinationLocationCode=varis,
@@ -121,8 +121,7 @@ def hizli_arama_motoru(kalkis_kodu, hedef_sehirler_dict, baslangic_tarihi, arama
                     tarih_d = seg_d['departure']['at']
                     
                     h_kod = seg_g['carrierCode']
-                    # SÖZLÜKTEN TAM İSMİ ÇEKME İŞLEMİ:
-                    h_ad = HAVAYOLU_ISIMLERI.get(h_kod, h_kod) # Bulamazsa kodu yazar ama genelde bulur
+                    h_ad = HAVAYOLU_ISIMLERI.get(h_kod, h_kod)
                     
                     toplam_seg = len(ucus['itineraries'][0]['segments']) + len(ucus['itineraries'][1]['segments'])
                     tip = "Direkt" if toplam_seg == 2 else "Aktarmalı"
@@ -163,7 +162,8 @@ def bilet_kart_ciz(bilet):
         renk = "#1976d2" # Mavi (Diğer)
         yazi_rengi = renk
         
-    html = f"""
+    # HTML KODU (textwrap.dedent ile girintileri temizliyoruz)
+    html = textwrap.dedent(f"""
     <div style="background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 20px; display: flex; overflow: hidden; font-family: 'Segoe UI', sans-serif; border: 1px solid #e0e0e0;">
         <div style="background: {renk}; width: 12px;"></div>
         <div style="padding: 20px; flex-grow: 1;">
@@ -198,11 +198,11 @@ def bilet_kart_ciz(bilet):
             <div style="font-size: 14px; color: #388e3c; font-weight:600;">{bilet['Para']}</div>
         </div>
     </div>
-    """
+    """)
     st.markdown(html, unsafe_allow_html=True)
 
 # --- 3. ARAYÜZ ---
-st.set_page_config(page_title="Jarvis Air v4", layout="centered")
+st.set_page_config(page_title="Jarvis Air v4.1", layout="centered")
 
 st.title("🛫 Jarvis Uçuş Bulucu")
 st.caption("Kişisel seyahat asistanınız, en iyi 5 gidiş-dönüş fırsatını tarıyor...")
@@ -247,7 +247,6 @@ if btn_ara:
             df = pd.DataFrame(sonuclar).sort_values(by="Fiyat")
             st.success(f"Toplam {len(df)} adet Gidiş-Dönüş uçuşu bulundu. En ucuz 5 seçenek listeleniyor:")
             
-            # --- FİNAL DOKUNUŞ: Sadece ilk 5 bileti göster ---
             for i, row in df.head(5).iterrows():
                 bilet_kart_ciz(row)
         else:
