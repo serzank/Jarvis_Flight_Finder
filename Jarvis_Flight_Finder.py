@@ -4,16 +4,23 @@ from amadeus import Client, ResponseError
 from datetime import date, timedelta
 
 # --- 1. AYARLAR ---
-st.set_page_config(page_title="Jarvis Flight v10", layout="wide", page_icon="✈️")
+st.set_page_config(page_title="Jarvis Flight v11 (Strict Mode)", layout="wide", page_icon="✈️")
 
-# CSS: Buton ve Tablo
+# CSS: Buton ve Tasarım
 st.markdown("""
 <style>
     .stButton button {
         width: 100%;
-        background-color: #005EB8; /* İGA Mavisi */
-        color: white;
+        background-color: #0e1117; 
+        color: #d0d0d0;
+        border: 1px solid #333;
         border-radius: 8px;
+        transition: all 0.3s;
+    }
+    .stButton button:hover {
+        background-color: #262730;
+        border-color: #005EB8;
+        color: white;
     }
     div[data-testid="stMetricValue"] {
         font-size: 18px;
@@ -28,11 +35,10 @@ try:
         client_secret='uZxH10uZmCnhGUiS'
     )
 except:
-    st.error("API Hatası: Bağlantı kurulamadı.")
+    st.error("Sistem Hatası: API bağlantısı kurulamadı.")
     st.stop()
 
 # --- VERİTABANI ---
-# İGA ve SAW ayrımı netleştirildi
 KALKIS_NOKTALARI = {
     "İstanbul - İGA (IST)": "IST", 
     "İstanbul - Sabiha Gökçen (SAW)": "SAW",
@@ -60,10 +66,6 @@ HAVAYOLU_SOZLUGU = {
 # --- 2. FONKSİYONLAR ---
 
 def generate_skyscanner_link(origin, dest, dep_date, ret_date):
-    """
-    Skyscanner Link Formatı: origin/dest/yymmdd/yymmdd
-    Örn: ist/fco/251201/251205
-    """
     d_str = dep_date.replace("-", "")[2:]
     r_str = ret_date.replace("-", "")[2:]
     return f"https://www.skyscanner.com.tr/transport/flights/{origin.lower()}/{dest.lower()}/{d_str}/{r_str}"
@@ -76,47 +78,52 @@ def get_flights(origin, dest, dep_date, ret_date, non_stop):
             departureDate=dep_date.strftime("%Y-%m-%d"),
             returnDate=ret_date.strftime("%Y-%m-%d"),
             adults=1,
-            max=10,
+            max=15, # Daha fazla veri çekip filtreleyeceğiz
             nonStop=str(non_stop).lower(),
             currencyCode="EUR"
         )
         return response.data
-    except ResponseError as e:
-        st.error(f"Sorgu Hatası: {e}")
+    except ResponseError:
         return []
 
-def parse_data(offers):
+def parse_data(offers, requested_origin):
+    """
+    Veriyi işlerken İSTENEN havalimanı ile GELEN havalimanını kıyaslar.
+    Eşleşmiyorsa veriyi çöpe atar.
+    """
     parsed_list = []
+    
     for offer in offers:
         try:
-            # Gidiş Detayları
+            # --- 1. GÜVENLİK KONTROLÜ (STRICT FILTER) ---
+            # API bazen IST isteyince SAW da gönderebilir ("İstanbul" olarak algılayıp).
+            # Bunu manuel olarak engelliyoruz.
             it_out = offer['itineraries'][0]['segments']
-            # Dönüş Detayları
-            it_in = offer['itineraries'][1]['segments']
+            real_origin = it_out[0]['departure']['iataCode']
             
-            # Fiyat
+            if real_origin != requested_origin:
+                continue # Bu satırı atla, listeye ekleme!
+
+            # --- 2. VERİ ÇEKME ---
+            it_in = offer['itineraries'][1]['segments']
             price = float(offer['price']['total'])
             currency = offer['price']['currency']
             
-            # Havayolu
             carrier = it_out[0]['carrierCode']
             airline = HAVAYOLU_SOZLUGU.get(carrier, carrier)
             
-            # Saatler
             dep_time = it_out[0]['departure']['at'].split('T')[1][:5]
             arr_time = it_out[-1]['arrival']['at'].split('T')[1][:5]
             
-            # Dönüş Saatleri
             ret_dep_time = it_in[0]['departure']['at'].split('T')[1][:5]
             ret_arr_time = it_in[-1]['arrival']['at'].split('T')[1][:5]
             
-            # Aktarma Bilgisi
             stops_out = len(it_out) - 1
             type_txt = "Direkt" if stops_out == 0 else f"{stops_out} Aktarma"
             
             parsed_list.append({
                 "Havayolu": airline,
-                "Rota": f"{it_out[0]['departure']['iataCode']} ↔ {it_out[-1]['arrival']['iataCode']}",
+                "Rota": f"{real_origin} ↔ {it_out[-1]['arrival']['iataCode']}",
                 "Saat_Gidis": f"{dep_time} - {arr_time}",
                 "Saat_Donus": f"{ret_dep_time} - {ret_arr_time}",
                 "Tip": type_txt,
@@ -127,12 +134,13 @@ def parse_data(offers):
             })
         except:
             continue
+            
     return parsed_list
 
 # --- 3. ARAYÜZ ---
 
 with st.sidebar:
-    st.title("🛫 Uçuş Planlayıcı")
+    st.header("🛫 Jarvis Flight | Strict Mode")
     
     # Rota Seçimi
     kalkis_key = st.selectbox("Kalkış", list(KALKIS_NOKTALARI.keys()))
@@ -141,64 +149,62 @@ with st.sidebar:
     origin_code = KALKIS_NOKTALARI[kalkis_key]
     dest_code = VARIS_NOKTALARI[varis_key]
     
-    st.divider()
+    st.write("---")
     
-    # TARİH SEÇİMİ (Çift Tarih)
-    col_d1, col_d2 = st.columns(2)
-    with col_d1:
-        date_dep = st.date_input("Gidiş Tarihi", min_value=date.today())
-    with col_d2:
-        date_ret = st.date_input("Dönüş Tarihi", min_value=date_dep + timedelta(days=1), value=date_dep + timedelta(days=4))
+    # Tarih Seçimi
+    col1, col2 = st.columns(2)
+    with col1:
+        date_dep = st.date_input("Gidiş", min_value=date.today() + timedelta(days=1))
+    with col2:
+        date_ret = st.date_input("Dönüş", min_value=date_dep + timedelta(days=2))
         
-    st.divider()
+    only_direct = st.checkbox("Sadece Direkt", value=True)
     
-    # Filtreler
-    only_direct = st.checkbox("Sadece Direkt Uçuşlar", value=True)
-    
-    btn_ara = st.button("Uçuşları Listele", type="primary")
+    st.write("---")
+    btn_ara = st.button("Uçuş Bul", type="primary")
 
-# --- 4. SONUÇLAR ---
+# --- 4. SONUÇ EKRANI ---
 
-st.subheader(f"✈️ {kalkis_key.split('(')[0]} ➔ {varis_key.split('(')[0]}")
-st.caption(f"Tarih Aralığı: {date_dep.strftime('%d.%m.%Y')} - {date_ret.strftime('%d.%m.%Y')}")
+st.subheader(f"Uçuş Sonuçları: {origin_code} ➔ {dest_code}")
 
 if btn_ara:
-    with st.spinner("En uygun biletler taranıyor..."):
-        if date_ret <= date_dep:
-            st.error("Hata: Dönüş tarihi gidiş tarihinden önce olamaz.")
-        else:
-            raw_results = get_flights(origin_code, dest_code, date_dep, date_ret, only_direct)
+    with st.spinner(f"{kalkis_key} kalkışlı uçuşlar filtreleniyor..."):
+        # API Sorgusu
+        raw_results = get_flights(origin_code, dest_code, date_dep, date_ret, only_direct)
+        
+        # Ayrıştırma ve Katı Filtreleme
+        clean_data = parse_data(raw_results, origin_code) 
+        
+        if clean_data:
+            df = pd.DataFrame(clean_data).sort_values("Fiyat")
             
-            if raw_results:
-                clean_data = parse_data(raw_results)
-                df = pd.DataFrame(clean_data).sort_values("Fiyat")
+            # Sonuç Kartları
+            for index, row in df.iterrows():
+                link = generate_skyscanner_link(origin_code, dest_code, row['Date_Raw_Dep'], row['Date_Raw_Ret'])
                 
-                st.success(f"{len(df)} adet uçuş bulundu.")
-                
-                for index, row in df.iterrows():
-                    # Link oluştururken hem gidiş hem dönüş tarihini kullanıyoruz
-                    link = generate_skyscanner_link(origin_code, dest_code, row['Date_Raw_Dep'], row['Date_Raw_Ret'])
+                with st.container(border=True):
+                    c1, c2, c3, c4 = st.columns([1.5, 2, 2, 1.5])
                     
-                    with st.container(border=True):
-                        c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 1.5, 1.5])
-                        
-                        # Havayolu & Tip
-                        c1.markdown(f"**{row['Havayolu']}**")
-                        c1.caption(row['Tip'])
-                        
-                        # Gidiş Bilgisi
-                        c2.markdown("🛫 **Gidiş**")
-                        c2.write(row['Saat_Gidis'])
-                        
-                        # Dönüş Bilgisi
-                        c3.markdown("🛬 **Dönüş**")
-                        c3.write(row['Saat_Donus'])
-                        
-                        # Fiyat
-                        c4.markdown(f"#### {int(row['Fiyat'])} {row['Para']}")
-                        
-                        # Buton
-                        c5.link_button("Bilete Git 🔗", link)
-            else:
-                st.warning("Bu tarih ve rota için uygun uçuş bulunamadı.")
-                st.info("İpucu: 'Sadece Direkt' seçeneğini kaldırarak tekrar deneyin.")
+                    # Kolon 1: Havayolu
+                    c1.markdown(f"**{row['Havayolu']}**")
+                    c1.caption(row['Tip'])
+                    
+                    # Kolon 2: Saatler
+                    c2.markdown(f"🛫 {row['Saat_Gidis']}")
+                    c2.markdown(f"🛬 {row['Saat_Donus']}")
+                    
+                    # Kolon 3: Fiyat
+                    c3.markdown(f"### {int(row['Fiyat'])} {row['Para']}")
+                    
+                    # Kolon 4: Aksiyon
+                    c4.link_button("Satın Al 🔗", link)
+                    
+            st.success(f"{len(df)} uygun uçuş listelendi.")
+        else:
+            st.warning("Uçuş bulunamadı.")
+            st.markdown(f"""
+            **Olası Sebepler:**
+            1. **{origin_code}** kalkışlı direkt uçuş olmayabilir (Örn: Pegasus genellikle SAW kullanır, İGA'dan çıkmaz).
+            2. Seçilen tarihlerde doluluk olabilir.
+            3. 'Sadece Direkt' filtresini kaldırıp tekrar deneyebilirsiniz.
+            """)
