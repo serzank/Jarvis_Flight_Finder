@@ -4,9 +4,9 @@ from amadeus import Client, ResponseError
 from datetime import date, timedelta
 
 # --- 1. AYARLAR ---
-st.set_page_config(page_title="Jarvis Flight v14 (Final)", layout="wide", page_icon="✈️")
+st.set_page_config(page_title="Jarvis Flight v15 (Split View)", layout="wide", page_icon="✈️")
 
-# CSS: Profesyonel Kart Tasarımı
+# CSS: Gelişmiş Tasarım
 st.markdown("""
 <style>
     .stButton button {
@@ -16,13 +16,14 @@ st.markdown("""
         font-weight: bold;
         border-radius: 8px;
     }
-    .info-box {
-        background-color: #e3f2fd;
+    .header-box {
+        background-color: #f0f2f6;
         padding: 10px;
-        border-radius: 5px;
-        border-left: 5px solid #005EB8;
-        margin-bottom: 20px;
-        font-size: 14px;
+        border-radius: 8px;
+        text-align: center;
+        font-weight: bold;
+        margin-bottom: 10px;
+        color: #333;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -34,7 +35,7 @@ try:
         client_secret='uZxH10uZmCnhGUiS'
     )
 except:
-    st.error("API Hatası: İnternet bağlantınızı kontrol edin.")
+    st.error("API Hatası: Bağlantı sorunu.")
     st.stop()
 
 # --- VERİ SETLERİ ---
@@ -52,31 +53,30 @@ VARIS_NOKTALARI = {
     "New York (JFK)": "JFK", "Dubai (DXB)": "DXB", "Atina (ATH)": "ATH"
 }
 
-# --- 2. YARDIMCI FONKSİYONLAR ---
+# --- 2. FONKSİYONLAR ---
 
-def generate_deeplink(origin, dest, dep_date, ret_date, carrier_code):
+def generate_oneway_link(origin, dest, travel_date, carrier_code):
     """
-    Skyscanner Link Üretici - Havayolu Filtreli
+    Tek yönlü bilet linki üretir.
     """
-    d_str = dep_date.replace("-", "")[2:]
-    r_str = ret_date.replace("-", "")[2:]
+    d_str = travel_date.replace("-", "")[2:]
+    base_url = f"https://www.skyscanner.com.tr/transport/flights/{origin.lower()}/{dest.lower()}/{d_str}"
     
-    base_url = f"https://www.skyscanner.com.tr/transport/flights/{origin.lower()}/{dest.lower()}/{d_str}/{r_str}"
-    
-    # Eğer havayolu kodu belliyse linke ekle
     if carrier_code:
         return f"{base_url}?airlines={carrier_code}"
     return base_url
 
-def search_amadeus(origin, dest, d_date, r_date, direct):
+def search_oneway(origin, dest, travel_date, direct):
+    """
+    Sadece TEK YÖN arama yapar.
+    """
     try:
         response = amadeus.shopping.flight_offers_search.get(
             originLocationCode=origin,
             destinationLocationCode=dest,
-            departureDate=d_date.strftime("%Y-%m-%d"),
-            returnDate=r_date.strftime("%Y-%m-%d"),
+            departureDate=travel_date.strftime("%Y-%m-%d"),
             adults=1,
-            max=20,
+            max=10, # Her bacak için en iyi 10 seçenek
             nonStop=str(direct).lower(),
             currencyCode="EUR"
         )
@@ -84,43 +84,40 @@ def search_amadeus(origin, dest, d_date, r_date, direct):
     except ResponseError:
         return [], {}
 
-def clean_results(offers, carriers, req_origin):
+def parse_oneway_results(offers, carriers, req_origin):
     data = []
     for o in offers:
         try:
-            seg_out = o['itineraries'][0]['segments']
-            seg_in = o['itineraries'][1]['segments']
+            # Tek yön olduğu için sadece itineraries[0] var
+            seg = o['itineraries'][0]['segments']
             
             # --- STRICT FILTER ---
-            # Kullanıcı IST seçtiyse, API'nin SAW önerilerini sil.
-            real_origin = seg_out[0]['departure']['iataCode']
+            # İstenen kalkış noktası ile API'nin verdiği uyuşuyor mu?
+            real_origin = seg[0]['departure']['iataCode']
             if real_origin != req_origin:
                 continue
 
-            carrier_code = seg_out[0]['carrierCode']
+            carrier_code = seg[0]['carrierCode']
             airline = carriers.get(carrier_code, carrier_code)
             
             price = float(o['price']['total'])
             currency = o['price']['currency']
             
-            # Saat Formatlama
-            t_out = f"{seg_out[0]['departure']['at'].split('T')[1][:5]} ➝ {seg_out[-1]['arrival']['at'].split('T')[1][:5]}"
-            t_in = f"{seg_in[0]['departure']['at'].split('T')[1][:5]} ➝ {seg_in[-1]['arrival']['at'].split('T')[1][:5]}"
+            dep_time = seg[0]['departure']['at'].split('T')[1][:5]
+            arr_time = seg[-1]['arrival']['at'].split('T')[1][:5]
             
-            stops = len(seg_out) - 1
+            stops = len(seg) - 1
             tip = "Direkt" if stops == 0 else f"{stops} Aktarma"
             
             data.append({
                 "Havayolu": airline,
                 "Kod": carrier_code,
-                "Rota": f"{real_origin} - {seg_out[-1]['arrival']['iataCode']}",
-                "Gidiş": t_out,
-                "Dönüş": t_in,
+                "Rota": f"{real_origin} ➝ {seg[-1]['arrival']['iataCode']}",
+                "Saat": f"{dep_time} - {arr_time}",
                 "Tip": tip,
                 "Fiyat": price,
                 "Para": currency,
-                "Raw_Dep": o['itineraries'][0]['segments'][0]['departure']['at'].split('T')[0],
-                "Raw_Ret": o['itineraries'][1]['segments'][0]['departure']['at'].split('T')[0]
+                "Raw_Date": o['itineraries'][0]['segments'][0]['departure']['at'].split('T')[0]
             })
         except:
             continue
@@ -129,10 +126,10 @@ def clean_results(offers, carriers, req_origin):
 # --- 3. ARAYÜZ ---
 
 with st.sidebar:
-    st.header("✈️ Jarvis Flight Manager")
+    st.header("✈️ Jarvis Split-Search")
     
-    kalkis = st.selectbox("Kalkış", list(KALKIS_NOKTALARI.keys()))
-    varis = st.selectbox("Varış", list(VARIS_NOKTALARI.keys()))
+    kalkis = st.selectbox("Kalkış Noktası", list(KALKIS_NOKTALARI.keys()))
+    varis = st.selectbox("Varış Noktası", list(VARIS_NOKTALARI.keys()))
     
     origin_code = KALKIS_NOKTALARI[kalkis]
     dest_code = VARIS_NOKTALARI[varis]
@@ -140,60 +137,80 @@ with st.sidebar:
     st.divider()
     
     c1, c2 = st.columns(2)
-    d_date = c1.date_input("Gidiş", min_value=date.today() + timedelta(days=7))
-    r_date = c2.date_input("Dönüş", min_value=d_date + timedelta(days=3))
+    d_date = c1.date_input("Gidiş Tarihi", min_value=date.today() + timedelta(days=7))
+    r_date = c2.date_input("Dönüş Tarihi", min_value=d_date + timedelta(days=2))
     
     direct_only = st.checkbox("Sadece Direkt Uçuşlar", value=True)
     
     st.divider()
-    btn = st.button("Uçuş Ara", type="primary")
+    btn = st.button("Uçuşları Ayrı Ayrı Getir", type="primary")
 
 # --- 4. SONUÇ EKRANI ---
 
-st.title(f"{origin_code} ✈ {dest_code}")
-
-# BİLGİLENDİRME KUTUSU (ÖNEMLİ)
-st.markdown(f"""
-<div class="info-box">
-    <b>⚠️ Fiyat Uyarısı (Sandbox Mode):</b><br>
-    Şu an geliştirici (Test) modundasınız. Görüntülenen fiyatlar (Örn: 300 EUR), havayolunun geçmiş veritabanından çekilen
-    referans fiyatlardır. <b>Canlı biletleme fiyatları (Skyscanner/THY) doluluk oranına göre %30-400 daha yüksek çıkabilir.</b>
-    Bu araç rota ve havayolu planlaması için idealdir.
-</div>
-""", unsafe_allow_html=True)
+st.title(f"{origin_code} ↔ {dest_code}")
+st.caption("Gidiş ve Dönüş uçuşları, en uygun kombinasyonu yapmanız için bağımsız listeleniyor.")
 
 if btn:
-    with st.spinner("Veriler analiz ediliyor..."):
-        raw, maps = search_amadeus(origin_code, dest_code, d_date, r_date, direct_only)
+    with st.spinner("Gidiş ve Dönüş veritabanları ayrı ayrı taranıyor..."):
         
-        if raw:
-            results = clean_results(raw, maps, origin_code)
+        # --- SORGU 1: GİDİŞ (Origin -> Dest) ---
+        raw_out, map_out = search_oneway(origin_code, dest_code, d_date, direct_only)
+        results_out = parse_oneway_results(raw_out, map_out, origin_code)
+        
+        # --- SORGU 2: DÖNÜŞ (Dest -> Origin) ---
+        # Dikkat: Burada Origin ve Dest YER DEĞİŞTİRİYOR.
+        # Ayrıca filtreleme yaparken 'req_origin' artık 'dest_code' oluyor.
+        raw_in, map_in = search_oneway(dest_code, origin_code, r_date, direct_only)
+        results_in = parse_oneway_results(raw_in, map_in, dest_code) 
+
+        # --- EKRAN YERLEŞİMİ (İKİ KOLON) ---
+        col_gidis, col_donus = st.columns(2)
+        
+        # === SOL KOLON: GİDİŞ ===
+        with col_gidis:
+            st.markdown(f"<div class='header-box'>🛫 GİDİŞ: {origin_code} ➔ {dest_code}<br><small>{d_date.strftime('%d.%m.%Y')}</small></div>", unsafe_allow_html=True)
             
-            if results:
-                df = pd.DataFrame(results).sort_values("Fiyat")
-                st.success(f"{len(df)} adet uçuş bulundu.")
+            if results_out:
+                df_out = pd.DataFrame(results_out).sort_values("Fiyat")
                 
-                for i, row in df.iterrows():
-                    link = generate_deeplink(origin_code, dest_code, row['Raw_Dep'], row['Raw_Ret'], row['Kod'])
+                for i, row in df_out.iterrows():
+                    link = generate_oneway_link(origin_code, dest_code, row['Raw_Date'], row['Kod'])
                     
-                    with st.container():
-                        col1, col2, col3, col4 = st.columns([2, 2.5, 1.5, 1.5])
+                    with st.container(border=True):
+                        # Satır 1: Havayolu ve Fiyat
+                        c_top1, c_top2 = st.columns([2, 1])
+                        c_top1.markdown(f"**{row['Havayolu']}**")
+                        c_top2.markdown(f"**{int(row['Fiyat'])} €**")
                         
-                        # Kolon 1: Logo/İsim
-                        col1.markdown(f"**{row['Havayolu']}**")
-                        col1.caption(f"{row['Tip']} ({row['Kod']})")
+                        # Satır 2: Detaylar
+                        st.caption(f"{row['Saat']} | {row['Tip']}")
                         
-                        # Kolon 2: Saatler
-                        col2.markdown(f"🛫 {row['Gidiş']}")
-                        col2.markdown(f"🛬 {row['Dönüş']}")
-                        
-                        # Kolon 3: Fiyat (Tahmini)
-                        col3.markdown(f"### {int(row['Fiyat'])} €")
-                        col3.caption("Referans Fiyat")
-                        
-                        # Kolon 4: Buton
-                        col4.link_button("Fiyatı Doğrula 🔗", link)
+                        # Satır 3: Buton
+                        st.link_button("Seç ➜", link, use_container_width=True)
             else:
-                st.warning(f"{origin_code} kalkışlı ve kriterlere uygun uçuş bulunamadı.")
-        else:
-            st.error("Veri bulunamadı. (Test ortamı kısıtlaması olabilir, tarihi değiştirip deneyin).")
+                st.warning("Gidiş uçuşu bulunamadı.")
+
+        # === SAĞ KOLON: DÖNÜŞ ===
+        with col_donus:
+            st.markdown(f"<div class='header-box'>🛬 DÖNÜŞ: {dest_code} ➔ {origin_code}<br><small>{r_date.strftime('%d.%m.%Y')}</small></div>", unsafe_allow_html=True)
+            
+            if results_in:
+                df_in = pd.DataFrame(results_in).sort_values("Fiyat")
+                
+                for i, row in df_in.iterrows():
+                    # Linkte Origin/Dest ters çevrili olmalı
+                    link = generate_oneway_link(dest_code, origin_code, row['Raw_Date'], row['Kod'])
+                    
+                    with st.container(border=True):
+                        # Satır 1: Havayolu ve Fiyat
+                        c_top1, c_top2 = st.columns([2, 1])
+                        c_top1.markdown(f"**{row['Havayolu']}**")
+                        c_top2.markdown(f"**{int(row['Fiyat'])} €**")
+                        
+                        # Satır 2: Detaylar
+                        st.caption(f"{row['Saat']} | {row['Tip']}")
+                        
+                        # Satır 3: Buton
+                        st.link_button("Seç ➜", link, use_container_width=True)
+            else:
+                st.warning("Dönüş uçuşu bulunamadı.")
